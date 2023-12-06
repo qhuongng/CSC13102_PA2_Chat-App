@@ -47,6 +47,13 @@ public class ClientUI extends JFrame {
             JButton sendButton = new JButton("Send");
             sendButton.setFocusable(false);
 
+            sendButton.addActionListener(new ActionListener() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    sendMessage();
+                }
+            });
+
             JButton sendFileButton = new JButton("Send file");
             sendFileButton.setFocusable(false);
             sendFileButton.addActionListener(new ActionListener() {
@@ -117,6 +124,28 @@ public class ClientUI extends JFrame {
             setLocationRelativeTo(null);
             setVisible(true);
 
+            new Thread(new Client()).start();
+        }
+    }
+
+    private class Client implements Runnable {
+        private Socket socket;
+        private BufferedReader reader;
+
+        @Override
+        public void run() {
+            try {
+                socket = new Socket("localhost", 8888);
+                reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                writer = new PrintWriter(socket.getOutputStream(), true);
+
+                String message;
+                while ((message = reader.readLine()) != null) {
+                    messages.addElement(message + "\n");
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
     }
 
@@ -336,6 +365,16 @@ public class ClientUI extends JFrame {
         }
 
         return path;
+    }
+
+    private void sendMessage() {
+        String message = textInput.getText();
+        messages.addElement("You: " + message + "\n");
+
+        // Send the message to the server
+        writer.println(username + ": " + message);
+
+        textInput.setText("");
     }
 
 }
