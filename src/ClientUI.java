@@ -19,14 +19,16 @@ public class ClientUI extends JFrame {
     private String username;
     private PrintWriter writer;
 
+    private ArrayList<String> onlineClients;
     private DefaultListModel<String> messages;
+    private JList<String> clientListPane;
     private JTextArea textInput;
 
     public ClientUI(String username) {
         super("Chat Application - " + username);
 
         this.username = username;
-        isLoggedIn = false;
+        this.onlineClients = new ArrayList<>();
 
         loginDialog(true);
 
@@ -103,6 +105,15 @@ public class ClientUI extends JFrame {
 
             JPanel clientListPane = new JPanel(new BorderLayout(10, 10));
             clientListPane.setPreferredSize(new Dimension(320, 600));
+            clientListPane.setCellRenderer(new ClientListCellRenderer());
+            clientListPane.addListSelectionListener(new ListSelectionListener() {
+                @Override
+                public void valueChanged(ListSelectionEvent e) {
+                    if (!e.getValueIsAdjusting()) {
+                        target = clientListPane.getSelectedValue();
+                    }
+                }
+            });
 
             JScrollPane clientListScrollPane = new JScrollPane(clientListPane);
 
@@ -119,7 +130,13 @@ public class ClientUI extends JFrame {
 
             add(panel);
 
-            setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+            addWindowListener(new WindowAdapter() {
+                public void windowClosing(WindowEvent e) {
+                    writer.println(username + "!disconnect");
+                    dispose();
+                }
+            });
             setSize(1200, 800);
             setLocationRelativeTo(null);
             setVisible(true);
@@ -366,6 +383,55 @@ public class ClientUI extends JFrame {
 
         return path;
     }
+    private class Client implements Runnable {
+        private Socket socket;
+        private BufferedReader reader;
+
+        @Override
+        public void run() {
+            try {
+                socket = new Socket("localhost", 7291);
+                reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                writer = new PrintWriter(socket.getOutputStream(), true);
+
+                // send username to server to handle
+                writer.println(username);
+
+                String message;
+
+                while ((message = reader.readLine()) != null) {
+                    if (message.contains("!online")) {
+                        // update client list
+                        String[] recvOnlineClients = message.split("\\,");
+                        String ownUsername = "";
+
+                        onlineClients.clear();
+                        DefaultListModel<String> clientList = new DefaultListModel<>();
+
+                        for (int i = 0; i < recvOnlineClients.length - 1; i++) {
+                            if (recvOnlineClients[i].equals(username)) {
+                                ownUsername = recvOnlineClients[i];
+                            } else {
+                                clientList.addElement(recvOnlineClients[i]);
+                            }
+
+                            onlineClients.add(recvOnlineClients[i]);
+                        }
+
+                        // add the current client on top of the list
+                        clientList.add(0, ownUsername);
+
+                        clientListPane.setModel(clientList);
+                        clientListPane.revalidate();
+                    } else {
+                        messages.addElement(message + "\n");
+                    }
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
 
     private void sendMessage() {
         String message = textInput.getText();
@@ -376,5 +442,31 @@ public class ClientUI extends JFrame {
 
         textInput.setText("");
     }
+class ClientListCellRenderer extends JLabel implements ListCellRenderer<String> {
+    @Override
+    public Component getListCellRendererComponent(JList<? extends String> list, String username, int index,
+            boolean isSelected, boolean cellHasFocus) {
 
+        setOpaque(true);
+
+        if (isSelected) {
+            setBackground(new Color(230, 247, 255));
+        } else {
+            setBackground(Color.WHITE);
+        }
+
+        Border padding = new EmptyBorder(20, 10, 20, 10);
+        Border border = new MatteBorder(1, 0, 1, 0, Color.LIGHT_GRAY);
+
+        setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+        setBorder(BorderFactory.createCompoundBorder(border, padding));
+
+        if (index == 0) {
+            username += " (You)";
+        }
+
+        setText("<html><p><b>" + username + "<b></p><p><font color='green'>• <em>active</em></font><p></html>");
+
+        return this;
+    }
 }
