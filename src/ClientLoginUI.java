@@ -1,36 +1,50 @@
-import java.util.*;
-import java.io.*;
-import java.net.Socket;
-import java.sql.*;
-
 import javax.swing.*;
 import javax.swing.event.*;
-import javax.swing.plaf.*;
-import javax.swing.text.*;
 import javax.swing.border.*;
 
 import java.awt.*;
 import java.awt.event.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.*;
+import java.util.Random;
 
-public class ClientLogin {
+public class ClientLoginUI {
+    private String username;
+    private String password;
+
+    private JFrame parentFrame;
+    private JDialog dialog;
+    private JLabel errorLabel;
+
+    private PrintWriter writer;
+
     private boolean isLoggedIn;
+    private boolean isClosed;
 
-    public ClientLogin() {
+    public ClientLoginUI(JFrame parentFrame) {
         this.isLoggedIn = false;
+        this.isClosed = false;
+        this.parentFrame = parentFrame;
+
+        new Thread(new ClientLogin()).start();
     }
 
-    public void openDialog(JFrame parentFrame, boolean isSigningUp) {
-        JDialog dialog = new JDialog();
+    public void openDialog(boolean isSigningUp) {
+        dialog = new JDialog();
         dialog.setModal(true);
         dialog.setAlwaysOnTop(true);
-        dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+        dialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
         dialog.setResizable(false);
 
         dialog.addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowClosing(java.awt.event.WindowEvent windowEvent) {
                 if (isLoggedIn == false) {
-                    parentFrame.dispose();
+                    isClosed = true;
+                    dialog.dispose();
                 }
             }
         });
@@ -59,7 +73,7 @@ public class ClientLogin {
                 dialog.setVisible(false);
                 dialog.dispose();
 
-                openDialog(parentFrame, !isSigningUp);
+                openDialog(!isSigningUp);
             }
         });
 
@@ -133,26 +147,27 @@ public class ClientLogin {
         repeatPasswordField.getDocument().addDocumentListener(fieldListener);
         /* end of adapted snippet */
 
+        // create an error message label
+        errorLabel = new JLabel();
+        errorLabel.setForeground(Color.RED);
+        errorLabel.setAlignmentX(JFrame.CENTER_ALIGNMENT);
+
         okButton.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent ae) {
                 // get the text input from text fields
-                String username = usernameField.getText().trim();
-                char[] password = passwordField.getPassword();
-                char[] repeatedPassword = repeatPasswordField.getPassword();
+                username = usernameField.getText().trim();
+                password = new String(passwordField.getPassword());
+                String repeatedPassword = new String(repeatPasswordField.getPassword());
 
-                if (isSigningUp) {
-                    dialog.setVisible(false);
-                    dialog.dispose();
-
-                    openDialog(parentFrame, false);
+                if (isSigningUp && !password.equals(repeatedPassword)) {
+                    errorLabel.setText("Password fields do not match.");
                 } else {
-                    isLoggedIn = true;
-
-                    dialog.setVisible(false);
-                    dialog.dispose();
+                    if (isSigningUp) {
+                        writer.println(username + "," + password + "!signup");
+                    } else {
+                        writer.println(username + "," + password + "!login");
+                    }
                 }
-
-                // TODO: handle user authentication
             }
         });
 
@@ -189,6 +204,8 @@ public class ClientLogin {
 
         panel.add(header);
         panel.add(Box.createRigidArea(new Dimension(0, 20)));
+        panel.add(errorLabel);
+        panel.add(Box.createRigidArea(new Dimension(0, 10)));
         panel.add(usernamePane);
         panel.add(Box.createRigidArea(new Dimension(0, 10)));
         panel.add(passwordPane);
@@ -209,7 +226,70 @@ public class ClientLogin {
         dialog.setVisible(true);
     }
 
-    public boolean getLoginState() {
+    private class ClientLogin implements Runnable {
+        private BufferedReader reader;
+        private Socket socket;
+        private int socketNo;
+
+        @Override
+        public void run() {
+            try {
+                Random random = new Random();
+                socketNo = random.nextInt(900) + 100;
+
+                socket = new Socket("localhost", 7291);
+                writer = new PrintWriter(socket.getOutputStream(), true);
+                reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+
+                writer.println(socketNo + "!authenticate");
+
+                String message;
+
+                while ((message = reader.readLine()) != null) {
+                    System.out.println("login socket: " + message + "\n");
+
+                    if (message.equals(username + "!accexists")) {
+                        // username already exists
+                        SwingUtilities.invokeLater(() -> errorLabel.setText("Username is already taken."));
+                    } else if (message.equals(username + "!signupsuccess")) {
+                        SwingUtilities.invokeLater(() -> {
+                            dialog.dispose(); // dispose of the current dialog
+
+                            openDialog(false);
+                        });
+                    } else if (message.equals(username + "!noacc")) {
+                        // username is not registered
+                        SwingUtilities.invokeLater(() -> errorLabel.setText("Username is not registered."));
+                    } else if (message.equals(username + "!wrongpass")) {
+                        // password is incorrect
+                        SwingUtilities.invokeLater(() -> errorLabel.setText("Incorrect password."));
+                    } else if (message.contains(username + "!loginsuccess")) {
+                        isLoggedIn = true;
+                        writer.println(socketNo + "!donelogin");
+                        SwingUtilities.invokeLater(dialog::dispose);
+                    }
+                }
+
+                socket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public boolean isClosed() {
+        return this.isClosed;
+    }
+
+    public boolean isLoggedIn() {
         return this.isLoggedIn;
+    }
+
+    public String getUsername() {
+        return this.username;
+    }
+
+    public String getPassword() {
+        return this.password.toString();
     }
 }

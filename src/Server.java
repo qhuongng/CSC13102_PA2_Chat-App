@@ -3,7 +3,9 @@ import java.io.*;
 import java.net.*;
 
 public class Server implements Runnable {
-    private Map<String, PrintWriter> clients;
+    private Map<String, PrintWriter> logins;
+    private Map<String, String> clients;
+    private Map<String, PrintWriter> onlineClientWriters;
     private ServerSocket serverSocket;
     private final int port = 7291;
 
@@ -11,35 +13,52 @@ public class Server implements Runnable {
     public void run() {
         try {
             clients = new HashMap<>();
+            loadUserDatabase();
+            System.out.println(clients);
+
+            logins = new HashMap<>();
+            onlineClientWriters = new HashMap<>();
 
             serverSocket = new ServerSocket(port);
             System.out.println("Server started on port " + port + ".\n");
 
             while (true) {
-                Socket clientSocket = serverSocket.accept();
+                Socket socket = serverSocket.accept();
 
-                new Thread(new ClientHandler(clientSocket)).start();
+                new Thread(new SocketHandler(socket)).start();
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
+    public void authRespond(PrintWriter writer, String message, String target) {
+        Set<String> loginNames = logins.keySet();
+        PrintWriter recvWriter;
+
+        for (String loginName : loginNames) {
+            if (loginName.equals(target)) {
+                recvWriter = logins.get(loginName);
+                recvWriter.println(message);
+            }
+        }
+    }
+
     public void broadcast(PrintWriter writer, String message, boolean isBroadcastingOnlineList, String target) {
         // get list of clients
-        Set<String> usernames = clients.keySet();
+        Set<String> usernames = onlineClientWriters.keySet();
         PrintWriter recvWriter;
 
         for (String username : usernames) {
             if (!target.isEmpty() || target != "") {
                 // send message to private chats
                 if (username.equals(target)) {
-                    recvWriter = clients.get(username);
+                    recvWriter = onlineClientWriters.get(username);
                     recvWriter.println(message);
                 }
             } else {
                 // broadcast
-                recvWriter = clients.get(username);
+                recvWriter = onlineClientWriters.get(username);
 
                 if (isBroadcastingOnlineList) {
                     recvWriter.println(message);
@@ -49,13 +68,12 @@ public class Server implements Runnable {
                     }
                 }
             }
-
         }
     }
 
     public void broadcastOnlineClients(PrintWriter writer) {
         String onlineClients = "";
-        Set<String> usernames = clients.keySet();
+        Set<String> usernames = onlineClientWriters.keySet();
 
         for (String username : usernames) {
             onlineClients += username + ",";
@@ -66,26 +84,78 @@ public class Server implements Runnable {
         broadcast(writer, onlineClients, true, "");
     }
 
-    private class ClientHandler implements Runnable {
+    public String convertToCsv(String[] credentials) {
+        return String.join(",", credentials);
+    }
+
+    public boolean writeToUserDatabase(String[] credentials) {
+        try {
+            BufferedWriter buffer = new BufferedWriter(new FileWriter("data/clients.csv", true));
+
+            buffer.write(convertToCsv(credentials));
+            buffer.newLine();
+            buffer.close();
+
+            return true;
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    public boolean loadUserDatabase() {
+        try {
+            BufferedReader buffer = new BufferedReader(new FileReader("data/clients.csv"));
+            String line = "";
+
+            while ((line = buffer.readLine()) != null) {
+                String[] data = line.split("\\,");
+
+                if (data.length != 2)
+                    continue;
+
+                String username = data[0];
+                String password = data[1];
+
+                clients.put(username, password);
+            }
+
+            buffer.close();
+
+            return true;
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    private class SocketHandler implements Runnable {
         private BufferedReader reader;
         private PrintWriter writer;
-        private String username;
+        private String name;
 
-        public ClientHandler(Socket socket) {
+        public SocketHandler(Socket socket) {
             try {
                 this.reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 this.writer = new PrintWriter(socket.getOutputStream(), true);
 
-                // read username
-                String connectMsg = reader.readLine();
-                this.username = connectMsg;
-                clients.put(username, writer);
+                String firstTouch = reader.readLine();
 
-                // prints the connect message onto the server
-                System.out.println(connectMsg + "!connect\n");
+                if (!firstTouch.contains("!authenticate")) {
+                    this.name = firstTouch;
 
-                // broadcast list of online clients to all clients
-                broadcastOnlineClients(writer);
+                    // print the connect message onto the server
+                    System.out.println(this.name + "!connect\n");
+
+                    // broadcast list of online clients to all clients
+                    onlineClientWriters.put(name, writer);
+                    broadcastOnlineClients(writer);
+                } else {
+                    this.name = firstTouch.split("!")[0];
+                    logins.put(name, writer);
+                }
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -97,11 +167,37 @@ public class Server implements Runnable {
                 String message;
 
                 while ((message = reader.readLine()) != null) {
+                    System.out.println("server: " + message + "\n");
+
                     // remove the client from the online list if they send the disconnect message
-                    if (message.equals(username + "!disconnect")) {
+                    if (message.equals(name + "!disconnect")) {
                         System.out.println(message + "\n");
-                        clients.remove(username);
+                        onlineClientWriters.remove(name);
                         broadcastOnlineClients(writer);
+                    } else if (message.contains("!signup")) {
+                        String[] msgTokens = message.split("!");
+                        String[] credentials = msgTokens[0].split(",");
+
+                        if (clients.containsKey(credentials[0])) {
+                            authRespond(writer, credentials[0] + "!accexists", name);
+                        } else {
+                            clients.put(credentials[0], credentials[1]);
+                            writeToUserDatabase(credentials);
+                            authRespond(writer, credentials[0] + "!signupsuccess", name);
+                        }
+                    } else if (message.contains("!login")) {
+                        String[] msgTokens = message.split("!");
+                        String[] credentials = msgTokens[0].split(",");
+
+                        if (!clients.containsKey(credentials[0])) {
+                            authRespond(writer, credentials[0] + "!noacc", name);
+                        } else if (!clients.get(credentials[0]).equals(credentials[1])) {
+                            authRespond(writer, credentials[0] + "!wrongpass", name);
+                        } else {
+                            authRespond(writer, credentials[0] + "!loginsuccess", name);
+                        }
+                    } else if (message.equals(name + "!donelogin")) {
+                        logins.remove(name);
                     } else {
                         // split the messages and targets
                         String[] msgTokens = message.split("!");

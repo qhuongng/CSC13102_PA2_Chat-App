@@ -32,8 +32,8 @@ public class Main {
             }
 
             new Thread(new Server()).start();
-            new ClientUI("Client 1");
-            new ClientUI("Client 2");
+            new ClientUI();
+            new ClientUI();
         });
     }
 }
