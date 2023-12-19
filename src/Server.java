@@ -44,7 +44,7 @@ public class Server implements Runnable {
         }
     }
 
-    public void broadcast(PrintWriter writer, String message, boolean isBroadcastingOnlineList, String target) {
+    public void broadcast(PrintWriter writer, String message, boolean isBroadcastingToAll, String target) {
         // get list of clients
         Set<String> usernames = onlineClientWriters.keySet();
         PrintWriter recvWriter;
@@ -60,7 +60,7 @@ public class Server implements Runnable {
                 // broadcast
                 recvWriter = onlineClientWriters.get(username);
 
-                if (isBroadcastingOnlineList) {
+                if (isBroadcastingToAll) {
                     recvWriter.println(message);
                 } else {
                     if (recvWriter != writer) {
@@ -71,17 +71,21 @@ public class Server implements Runnable {
         }
     }
 
-    public void broadcastOnlineClients(PrintWriter writer) {
-        String onlineClients = "";
-        Set<String> usernames = onlineClientWriters.keySet();
+    public void broadcastClients(PrintWriter writer, Map<String, ?> map, String mode) {
+        String broadcastMsg = "";
+        Set<String> usernames = map.keySet();
 
         for (String username : usernames) {
-            onlineClients += username + ",";
+            broadcastMsg += username + ",";
         }
 
-        onlineClients += "!online";
+        if (mode == "online") {
+            broadcastMsg += "!online";
+        } else if (mode == "all") {
+            broadcastMsg += "!all";
+        }
 
-        broadcast(writer, onlineClients, true, "");
+        broadcast(writer, broadcastMsg, true, "");
     }
 
     public String convertToCsv(String[] credentials) {
@@ -149,9 +153,13 @@ public class Server implements Runnable {
                     // print the connect message onto the server
                     System.out.println(this.name + "!connect\n");
 
-                    // broadcast list of online clients to all clients
                     onlineClientWriters.put(name, writer);
-                    broadcastOnlineClients(writer);
+
+                    // broadcast list of all registered clients to all clients
+                    broadcastClients(writer, clients, "all");
+
+                    // broadcast list of online clients to all clients
+                    broadcastClients(writer, onlineClientWriters, "online");
                 } else {
                     this.name = firstTouch.split("!")[0];
                     logins.put(name, writer);
@@ -173,7 +181,7 @@ public class Server implements Runnable {
                     if (message.equals(name + "!disconnect")) {
                         System.out.println(message + "\n");
                         onlineClientWriters.remove(name);
-                        broadcastOnlineClients(writer);
+                        broadcastClients(writer, onlineClientWriters, "online");
                     } else if (message.contains("!signup")) {
                         String[] msgTokens = message.split("!");
                         String[] credentials = msgTokens[0].split(",");

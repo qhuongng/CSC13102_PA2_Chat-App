@@ -4,8 +4,6 @@ import java.net.Socket;
 
 import javax.swing.*;
 import javax.swing.event.*;
-import javax.swing.plaf.*;
-import javax.swing.text.*;
 import javax.swing.border.*;
 
 import java.awt.*;
@@ -18,9 +16,8 @@ public class ClientUI extends JFrame {
     private String username;
     private PrintWriter writer;
 
-    private boolean chatSelected;
-
-    private ArrayList<String> onlineClients;
+    // false: offline, true: online
+    private Map<String, Boolean> clients;
     private DefaultListModel<String> messages;
 
     // when clicked into a chat, load targets with the users in that chat
@@ -34,24 +31,30 @@ public class ClientUI extends JFrame {
         super();
 
         this.login = new ClientLoginUI(this);
-        this.onlineClients = new ArrayList<>();
+        this.clients = new HashMap<>();
         this.target = "";
-        this.chatSelected = false;
 
         login.openDialog(true);
 
         while (login.isLoggedIn() == false) {
             if (login.isClosed()) {
                 dispose();
+                break;
             }
         }
 
-        this.username = login.getUsername();
-        setTitle(username);
+        if (!login.isClosed()) {
+            this.username = login.getUsername();
+            setTitle(username);
 
-        initUI();
+            // create a chat history folder for the user
+            // will not do anything if the folder already exists
+            new File("data/chats/" + username).mkdirs();
 
-        new Thread(new Client()).start();
+            initUI();
+
+            new Thread(new Client()).start();
+        }
     }
 
     private void initUI() {
@@ -62,7 +65,6 @@ public class ClientUI extends JFrame {
         textInput = new JTextArea(3, 30);
         textInput.setLineWrap(true);
         textInput.setWrapStyleWord(true);
-
         textInput.addKeyListener(new KeyListener() {
             @Override
             public void keyTyped(KeyEvent e) {
@@ -76,7 +78,8 @@ public class ClientUI extends JFrame {
             public void keyPressed(KeyEvent e) {
                 if (e.getKeyCode() == KeyEvent.VK_ENTER) {
                     e.consume();
-                    if (chatSelected) {
+
+                    if (target != "") {
                         sendMessage();
                     }
                 }
@@ -133,7 +136,7 @@ public class ClientUI extends JFrame {
                 boolean emptyInput = (textInput.getText().isEmpty() || textInput.getText() == null);
 
                 if (!emptyInput) {
-                    if (chatSelected) {
+                    if (target != "") {
                         sendButton.setEnabled(true);
                     }
                 } else {
@@ -169,7 +172,9 @@ public class ClientUI extends JFrame {
                     target = clientListPane.getSelectedValue();
                     chatName.setText(clientListPane.getSelectedValue());
                     deleteChatButton.setEnabled(true);
-                    chatSelected = true;
+
+                    // import chat history
+                    importChatHistory(username, target);
                 }
             }
         });
@@ -201,6 +206,61 @@ public class ClientUI extends JFrame {
         setVisible(true);
     }
 
+    public boolean writeChatHistory(String sender, String receiver, String message) {
+        try {
+            File chatHistoryFile = new File("data/chats/" + sender + "/" + receiver + ".txt");
+
+            if (!chatHistoryFile.exists()) {
+                chatHistoryFile.createNewFile();
+            }
+
+            else if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
+                BufferedWriter buffer = new BufferedWriter(new FileWriter(chatHistoryFile, true));
+
+                buffer.write(message);
+                buffer.newLine();
+
+                buffer.close();
+
+                return true;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    public boolean importChatHistory(String sender, String receiver) {
+        // clear the messages screen
+        messages.clear();
+
+        try {
+            File chatHistoryFile = new File("data/chats/" + sender + "/" + receiver + ".txt");
+
+            if (!chatHistoryFile.exists()) {
+                chatHistoryFile.createNewFile();
+            }
+
+            else if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
+                BufferedReader buffer = new BufferedReader(new FileReader(chatHistoryFile));
+                String line = "";
+
+                while ((line = buffer.readLine()) != null) {
+                    messages.addElement(line);
+                }
+
+                buffer.close();
+
+                return true;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
     private String openFileChooser(boolean isDirOnly) {
         chooser = new JFileChooser("C:/");
 
@@ -229,11 +289,16 @@ public class ClientUI extends JFrame {
     }
 
     private void sendMessage() {
-        String message = textInput.getText();
-        messages.addElement("You: " + message + "\n");
+        String messageBody = textInput.getText();
+        String ownMessage = "You: " + messageBody;
 
-        // Send the message to the server
-        writer.println(username + ": " + message + "!target:" + target);
+        messages.addElement(ownMessage);
+
+        // send the message to the server
+        writer.println(username + ": " + messageBody + "!target:" + target);
+
+        // write the message to the chat history file
+        writeChatHistory(username, target, ownMessage);
 
         textInput.setText("");
     }
@@ -254,22 +319,21 @@ public class ClientUI extends JFrame {
                 String message;
 
                 while ((message = reader.readLine()) != null) {
-                    if (message.contains("!online")) {
-                        // update client list
-                        String[] recvOnlineClients = message.split("\\,");
+                    if (message.contains("!all")) {
+                        String[] receivedClientString = message.split("\\,");
                         String ownUsername = "";
 
-                        onlineClients.clear();
+                        clients.clear();
                         DefaultListModel<String> clientList = new DefaultListModel<>();
 
-                        for (int i = 0; i < recvOnlineClients.length - 1; i++) {
-                            if (recvOnlineClients[i].equals(username)) {
-                                ownUsername = recvOnlineClients[i];
+                        for (int i = 0; i < receivedClientString.length - 1; i++) {
+                            if (receivedClientString[i].equals(username)) {
+                                ownUsername = receivedClientString[i];
+                                clients.put(receivedClientString[i], true);
                             } else {
-                                clientList.addElement(recvOnlineClients[i]);
+                                clientList.addElement(receivedClientString[i]);
+                                clients.put(receivedClientString[i], false);
                             }
-
-                            onlineClients.add(recvOnlineClients[i]);
                         }
 
                         // add the current client on top of the list
@@ -277,8 +341,27 @@ public class ClientUI extends JFrame {
 
                         clientListPane.setModel(clientList);
                         clientListPane.revalidate();
+                    } else if (message.contains("!online")) {
+                        // update online status client list
+                        String[] receivedOnlineClientString = message.split("\\,");
+
+                        for (int i = 0; i < receivedOnlineClientString.length - 1; i++) {
+                            if (!receivedOnlineClientString[i].equals(username)) {
+                                clients.put(receivedOnlineClientString[i], true);
+                            }
+                        }
+
+                        clientListPane.revalidate();
                     } else if (!message.contains("!login") && !message.contains("!signup")) {
-                        messages.addElement(message + "\n");
+                        if (target != "") {
+                            messages.addElement(message);
+                        }
+
+                        // retrieve the sender's name to write to corresponding history file
+                        String[] msgTokens = message.split(":");
+
+                        // write the message to the chat history file
+                        writeChatHistory(username, msgTokens[0], message);
                     }
                 }
             } catch (IOException e) {
@@ -286,33 +369,41 @@ public class ClientUI extends JFrame {
             }
         }
     }
-}
 
-class ClientListCellRenderer extends JLabel implements ListCellRenderer<String> {
-    @Override
-    public Component getListCellRendererComponent(JList<? extends String> list, String username, int index,
-            boolean isSelected, boolean cellHasFocus) {
+    private class ClientListCellRenderer extends JLabel implements ListCellRenderer<String> {
+        @Override
+        public Component getListCellRendererComponent(JList<? extends String> list, String clientName, int index,
+                boolean isSelected, boolean cellHasFocus) {
 
-        setOpaque(true);
+            setOpaque(true);
 
-        if (isSelected) {
-            setBackground(new Color(230, 247, 255));
-        } else {
-            setBackground(Color.WHITE);
+            if (isSelected) {
+                setBackground(new Color(230, 247, 255));
+            } else {
+                setBackground(Color.WHITE);
+            }
+
+            Border padding = new EmptyBorder(20, 10, 20, 10);
+            Border border = new MatteBorder(1, 0, 1, 0, Color.LIGHT_GRAY);
+
+            setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+            setBorder(BorderFactory.createCompoundBorder(border, padding));
+
+            if (index == 0) {
+                clientName += " (You)";
+            }
+
+            String labelText = "<html><p><b>" + clientName;
+
+            if (clientName.contains("(You)") || (clients.get(clientName) != null && clients.get(clientName) == true)) {
+                labelText += "</b></p><p><font color='green'>• <em>active</em></font><p></html>";
+            } else if ((clients.get(clientName) != null && clients.get(clientName) == false)) {
+                labelText += "<b></p><p><font color='gray'>• <em>offline</em></font><p></html>";
+            }
+
+            setText(labelText);
+
+            return this;
         }
-
-        Border padding = new EmptyBorder(20, 10, 20, 10);
-        Border border = new MatteBorder(1, 0, 1, 0, Color.LIGHT_GRAY);
-
-        setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
-        setBorder(BorderFactory.createCompoundBorder(border, padding));
-
-        if (index == 0) {
-            username += " (You)";
-        }
-
-        setText("<html><p><b>" + username + "<b></p><p><font color='green'>• <em>active</em></font><p></html>");
-
-        return this;
     }
 }
