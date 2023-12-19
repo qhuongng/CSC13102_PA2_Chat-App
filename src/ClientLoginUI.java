@@ -22,11 +22,11 @@ public class ClientLoginUI {
     private PrintWriter writer;
 
     private boolean isLoggedIn;
-    private boolean isClosed;
+    private boolean isCanceled;
 
     public ClientLoginUI(JFrame parentFrame) {
         this.isLoggedIn = false;
-        this.isClosed = false;
+        this.isCanceled = false;
         this.parentFrame = parentFrame;
 
         new Thread(new ClientLogin()).start();
@@ -43,7 +43,7 @@ public class ClientLoginUI {
             @Override
             public void windowClosing(java.awt.event.WindowEvent windowEvent) {
                 if (isLoggedIn == false) {
-                    isClosed = true;
+                    isCanceled = true;
                     dialog.dispose();
                 }
             }
@@ -277,8 +277,8 @@ public class ClientLoginUI {
         }
     }
 
-    public boolean isClosed() {
-        return this.isClosed;
+    public boolean isCanceled() {
+        return this.isCanceled;
     }
 
     public boolean isLoggedIn() {

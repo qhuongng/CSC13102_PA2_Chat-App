@@ -37,13 +37,13 @@ public class ClientUI extends JFrame {
         login.openDialog(true);
 
         while (login.isLoggedIn() == false) {
-            if (login.isClosed()) {
+            if (login.isCanceled()) {
                 dispose();
                 break;
             }
         }
 
-        if (!login.isClosed()) {
+        if (!login.isCanceled()) {
             this.username = login.getUsername();
             setTitle(username);
 
@@ -152,6 +152,26 @@ public class ClientUI extends JFrame {
         deleteChatButton.setFocusable(false);
         deleteChatButton.setEnabled(false);
 
+        deleteChatButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                // show confirm dialog
+                int input = JOptionPane.showConfirmDialog(ClientUI.this, "Do you want to delete this chat?",
+                        "Confirm chat delete", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+
+                if (input == 0) {
+                    // OK
+                    messages.clear();
+                    clearChatHistory(username, target);
+
+                    // show complete dialog
+                    JOptionPane.showConfirmDialog(ClientUI.this,
+                            "Chat history deleted successfully.", "Delete complete", JOptionPane.DEFAULT_OPTION,
+                            JOptionPane.PLAIN_MESSAGE);
+                }
+            }
+        });
+
         JLabel chatName = new JLabel("Select a chat to start...");
         chatName.setFont(new Font(new JLabel().getFont().getName(), Font.BOLD, 20));
 
@@ -220,6 +240,25 @@ public class ClientUI extends JFrame {
                 buffer.write(message);
                 buffer.newLine();
 
+                buffer.close();
+
+                return true;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    public boolean clearChatHistory(String sender, String receiver) {
+        try {
+            File chatHistoryFile = new File("data/chats/" + sender + "/" + receiver + ".txt");
+
+            if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
+                BufferedWriter buffer = new BufferedWriter(new FileWriter(chatHistoryFile));
+
+                buffer.write("");
                 buffer.close();
 
                 return true;
