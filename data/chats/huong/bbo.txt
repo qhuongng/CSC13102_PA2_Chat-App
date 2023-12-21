@@ -1,3 +1,4 @@
-You: annyeong
+huong: annyeong
 bbo: yah
 bbo: wae
+huong: annyeonghaseyo

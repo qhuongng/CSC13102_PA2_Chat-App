@@ -1,2 +1,2 @@
-You: hi
+huong: hi
 seol: hello!

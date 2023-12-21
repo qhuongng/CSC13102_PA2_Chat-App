@@ -1,9 +1,10 @@
 import java.util.*;
 import java.io.*;
-import java.net.Socket;
+import java.net.*;
 
 import javax.swing.*;
 import javax.swing.event.*;
+import javax.swing.plaf.FontUIResource;
 import javax.swing.border.*;
 
 import java.awt.*;
@@ -39,7 +40,7 @@ public class ClientUI extends JFrame {
         while (login.isLoggedIn() == false) {
             if (login.isCanceled()) {
                 dispose();
-                break;
+                System.exit(0);
             }
         }
 
@@ -55,7 +56,10 @@ public class ClientUI extends JFrame {
 
     private void initUI() {
         messages = new DefaultListModel<>();
+
         JList<String> messagePane = new JList<>(messages);
+        messagePane.setCellRenderer(new MessageListCellRenderer());
+
         JScrollPane messageScrollPane = new JScrollPane(messagePane);
 
         textInput = new JTextArea(3, 30);
@@ -189,7 +193,24 @@ public class ClientUI extends JFrame {
             public void valueChanged(ListSelectionEvent e) {
                 if (!e.getValueIsAdjusting()) {
                     target = clientListPane.getSelectedValue();
-                    chatName.setText(clientListPane.getSelectedValue());
+                    if (clientListPane.getSelectedValue().contains(";")) {
+                        String selected = clientListPane.getSelectedValue();
+                        // group chat
+                        String[] members = selected.split(";");
+
+                        String labelText = "";
+
+                        for (int i = 0; i < members.length - 1; i++) {
+                            labelText += members[i] + ", ";
+                        }
+
+                        labelText += members[members.length - 1];
+
+                        chatName.setText(labelText);
+                    } else {
+                        chatName.setText(clientListPane.getSelectedValue());
+                    }
+
                     deleteChatButton.setEnabled(true);
 
                     // clear the messages screen
@@ -204,6 +225,12 @@ public class ClientUI extends JFrame {
 
         JButton newGroupChatButton = new JButton("New group chat");
         newGroupChatButton.setFocusable(false);
+        newGroupChatButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                openClientChooser();
+            }
+        });
 
         JPanel clientsPane = new JPanel(new BorderLayout(10, 10));
         clientsPane.add(clientListScrollPane, BorderLayout.CENTER);
@@ -226,7 +253,9 @@ public class ClientUI extends JFrame {
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             public void windowClosing(WindowEvent e) {
+                writer.println(username + "!disconnect");
                 dispose();
+                System.exit(0);
             }
         });
         setSize(1200, 800);
@@ -261,14 +290,89 @@ public class ClientUI extends JFrame {
         return path;
     }
 
-    private void sendMessage() {
-        String messageBody = textInput.getText();
-        String ownMessage = "You: " + messageBody;
+    private void openClientChooser() {
+        JDialog dialog = new JDialog();
+        dialog.setTitle("Select group members");
+        dialog.setModal(true);
+        dialog.setAlwaysOnTop(true);
+        dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+        dialog.setResizable(false);
 
-        messages.addElement(ownMessage);
+        Set<String> clientNames = clients.keySet();
+        clientNames.remove(username);
+
+        JList<String> allClients = new JList<>(clientNames.toArray(new String[clientNames.size()]));
+        allClients.setSelectionModel(new DefaultListSelectionModel() {
+            @Override
+            public void setSelectionInterval(int index0, int index1) {
+                if (super.isSelectedIndex(index0)) {
+                    super.removeSelectionInterval(index0, index1);
+                } else {
+                    super.addSelectionInterval(index0, index1);
+                }
+            }
+        });
+
+        JButton okButton = new JButton("Create group chat");
+        okButton.setFocusable(false);
+        okButton.setEnabled(false);
+
+        okButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                java.util.List<String> selected = allClients.getSelectedValuesList();
+
+                createGroupChat(selected);
+
+                dialog.dispose();
+            }
+        });
+
+        allClients.addListSelectionListener(new ListSelectionListener() {
+            public void valueChanged(ListSelectionEvent e) {
+                // enable OK button if group chat has at least 3 members (including current
+                // user)
+                java.util.List<String> selected = allClients.getSelectedValuesList();
+
+                if (selected.size() >= 2) {
+                    okButton.setEnabled(true);
+                } else {
+                    okButton.setEnabled(false);
+                }
+            }
+        });
+
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        panel.add(new JScrollPane(allClients), BorderLayout.CENTER);
+        panel.add(okButton, BorderLayout.SOUTH);
+
+        dialog.add(panel);
+
+        dialog.pack();
+        dialog.setLocationRelativeTo(ClientUI.this);
+        dialog.setVisible(true);
+    }
+
+    private void createGroupChat(java.util.List<String> selected) {
+        String groupMembers = username + ";";
+
+        for (int i = 0; i < selected.size() - 1; i++) {
+            groupMembers += selected.get(i) + ";";
+        }
+
+        groupMembers += selected.get(selected.size() - 1) + "!newgroup";
+
+        writer.println(groupMembers);
+    }
+
+    private void sendMessage() {
+        String message = username + ": " + textInput.getText();
+
+        messages.addElement(message);
 
         // send the message to the server
-        writer.println(username + ": " + messageBody + "!target:" + target);
+        writer.println(message + "!target:" + target);
 
         textInput.setText("");
     }
@@ -317,6 +421,18 @@ public class ClientUI extends JFrame {
                         // update online status client list
                         String[] receivedOnlineClientString = message.split("\\,");
 
+                        // clear the old online status of all clients
+                        Set<String> allClients = clients.keySet();
+
+                        for (String client : allClients) {
+                            if (!client.equals(username)) {
+                                clients.put(client, false);
+                            }
+                        }
+
+                        clientListPane.revalidate();
+
+                        // refresh the online status
                         for (int i = 0; i < receivedOnlineClientString.length - 1; i++) {
                             if (!receivedOnlineClientString[i].equals(username)) {
                                 clients.put(receivedOnlineClientString[i], true);
@@ -330,6 +446,16 @@ public class ClientUI extends JFrame {
                         for (int i = 0; i < chatLines.length - 1; i++) {
                             messages.addElement(chatLines[i]);
                         }
+                    } else if (message.contains("!group:")) {
+                        // message structure: <sender>: <body>!group:<target>
+                        String[] msgTokens = message.split("!");
+                        String msgBody = msgTokens[0];
+                        String targetGroup = msgTokens[1].split(":")[1];
+
+                        if (target.equals(targetGroup)) {
+                            messages.addElement(msgBody);
+                        }
+
                     } else if (!message.contains("!login") && !message.contains("!signup")) {
                         if (target != "") {
                             messages.addElement(message);
@@ -361,21 +487,85 @@ public class ClientUI extends JFrame {
             setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
             setBorder(BorderFactory.createCompoundBorder(border, padding));
 
-            if (index == 0) {
-                clientName += " (You)";
-            }
-
             String labelText = "<html><p><b>" + clientName;
+
+            if (index == 0) {
+                labelText += " (You)";
+            }
 
             if (clientName.contains("(You)") || (clients.get(clientName) != null && clients.get(clientName) == true)) {
                 labelText += "</b></p><p><font color='green'>• <em>active</em></font><p></html>";
-            } else if ((clients.get(clientName) != null && clients.get(clientName) == false)) {
+            } else if (!clientName.contains(";") && clients.get(clientName) != null
+                    && clients.get(clientName) == false) {
                 labelText += "<b></p><p><font color='gray'>• <em>offline</em></font><p></html>";
+            } else if (clientName.contains(";")) {
+                // group chat
+                String[] members = clientName.split(";");
+
+                labelText = "<html><p><b>";
+
+                for (int i = 0; i < members.length - 1; i++) {
+                    labelText += members[i] + ", ";
+                }
+
+                labelText += members[members.length - 1]
+                        + "</b></p><p><font color='gray'><em>Group chat</em></font><p></html>";
             }
 
             setText(labelText);
 
             return this;
         }
+    }
+
+    private class MessageListCellRenderer extends JLabel implements ListCellRenderer<String> {
+        @Override
+        public Component getListCellRendererComponent(JList<? extends String> list, String message, int index,
+                boolean isSelected, boolean cellHasFocus) {
+
+            setBorder(BorderFactory.createEmptyBorder(10, 5, 10, 5));
+
+            if (message.contains(username)) {
+                setForeground(Color.BLUE);
+            } else {
+                setForeground(Color.RED);
+            }
+
+            String[] msgTokens = message.split(":");
+
+            setText("<html><p><b>" + msgTokens[0] + ":</b>" + msgTokens[1] + "</p></html>");
+
+            return this;
+        }
+    }
+
+    public static void setUIFont(FontUIResource f) {
+        java.util.Enumeration<?> keys = UIManager.getDefaults().keys();
+        while (keys.hasMoreElements()) {
+            Object key = keys.nextElement();
+            Object value = UIManager.get(key);
+            if (value instanceof FontUIResource)
+                UIManager.put(key, f);
+        }
+    }
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            try {
+                // set system look and feel
+                UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+                setUIFont(new FontUIResource((new JLabel().getFont().getName()), Font.PLAIN, 15));
+            } catch (UnsupportedLookAndFeelException e) {
+                e.printStackTrace();
+            } catch (ClassNotFoundException e) {
+                e.printStackTrace();
+            } catch (InstantiationException e) {
+                e.printStackTrace();
+            } catch (IllegalAccessException e) {
+                e.printStackTrace();
+            }
+
+            new ClientUI();
+        });
     }
 }

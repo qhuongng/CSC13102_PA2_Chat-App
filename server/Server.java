@@ -1,6 +1,6 @@
-import java.util.*;
 import java.io.*;
 import java.net.*;
+import java.util.*;
 
 public class Server implements Runnable {
     private Map<String, PrintWriter> logins;
@@ -13,8 +13,8 @@ public class Server implements Runnable {
     public void run() {
         try {
             clients = new HashMap<>();
+
             loadUserDatabase();
-            System.out.println(clients);
 
             logins = new HashMap<>();
             onlineClientWriters = new HashMap<>();
@@ -51,7 +51,6 @@ public class Server implements Runnable {
 
         for (String username : usernames) {
             if (!target.isEmpty() || target != "") {
-                // send message to private chats
                 if (username.equals(target)) {
                     recvWriter = onlineClientWriters.get(username);
                     recvWriter.println(message);
@@ -66,6 +65,22 @@ public class Server implements Runnable {
                     if (recvWriter != writer) {
                         recvWriter.println(message);
                     }
+                }
+            }
+        }
+    }
+
+    public void groupBroadcast(PrintWriter writer, String message, String target) {
+        // get list of clients
+        Set<String> usernames = onlineClientWriters.keySet();
+        PrintWriter recvWriter;
+
+        for (String username : usernames) {
+            if (target.contains(username)) {
+                recvWriter = onlineClientWriters.get(username);
+
+                if (recvWriter != writer) {
+                    recvWriter.println(message + "!group:" + target);
                 }
             }
         }
@@ -137,22 +152,68 @@ public class Server implements Runnable {
 
     public boolean writeChatHistory(String sender, String receiver, String message) {
         try {
-            File chatHistoryFile = new File("data/chats/" + sender + "/" + receiver + ".txt");
+            // write to sender's file
+            File senderChatHistoryFile = new File("data/chats/" + sender + "/" + receiver + ".txt");
 
-            if (!chatHistoryFile.exists()) {
-                chatHistoryFile.createNewFile();
+            if (!senderChatHistoryFile.exists()) {
+                senderChatHistoryFile.createNewFile();
             }
 
-            else if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
-                BufferedWriter buffer = new BufferedWriter(new FileWriter(chatHistoryFile, true));
+            if (senderChatHistoryFile.exists() && !senderChatHistoryFile.isDirectory()) {
+                BufferedWriter buffer = new BufferedWriter(new FileWriter(senderChatHistoryFile, true));
 
-                buffer.write(message);
+                buffer.write(sender + ":" + message);
                 buffer.newLine();
 
                 buffer.close();
-
-                return true;
             }
+
+            // write to receiver's file
+            File receiverChatHistoryFile = new File("data/chats/" + receiver + "/" + sender + ".txt");
+
+            if (!receiverChatHistoryFile.exists()) {
+                receiverChatHistoryFile.createNewFile();
+            }
+
+            if (receiverChatHistoryFile.exists() && !receiverChatHistoryFile.isDirectory()) {
+                BufferedWriter buffer = new BufferedWriter(new FileWriter(receiverChatHistoryFile, true));
+
+                buffer.write(sender + ":" + message);
+                buffer.newLine();
+
+                buffer.close();
+            }
+
+            return true;
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    public boolean writeGroupChatHistory(String sender, String receiver, String message) {
+        try {
+            String[] targets = receiver.split(";");
+
+            for (int i = 0; i < targets.length; i++) {
+                File chatHistoryFile = new File("data/chats/" + targets[i] + "/" + receiver + ".txt");
+
+                if (!chatHistoryFile.exists()) {
+                    chatHistoryFile.createNewFile();
+                }
+
+                if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
+                    BufferedWriter buffer = new BufferedWriter(new FileWriter(chatHistoryFile, true));
+
+                    buffer.write(sender + ":" + message);
+                    buffer.newLine();
+
+                    buffer.close();
+                }
+            }
+
+            return true;
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -188,12 +249,13 @@ public class Server implements Runnable {
                 chatHistoryFile.createNewFile();
             }
 
-            else if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
+            if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
                 BufferedReader buffer = new BufferedReader(new FileReader(chatHistoryFile));
                 String line = "";
 
                 while ((line = buffer.readLine()) != null) {
-                    messages += line + ";;";
+                    if (!line.equals("") && !line.isEmpty())
+                        messages += line + ";;";
                 }
 
                 messages += "!history";
@@ -253,7 +315,6 @@ public class Server implements Runnable {
 
                     // remove the client from the online list if they send the disconnect message
                     if (message.equals(name + "!disconnect")) {
-                        System.out.println(message + "\n");
                         onlineClientWriters.remove(name);
                         broadcastClients(writer, onlineClientWriters, "online");
                     } else if (message.contains("!signup")) {
@@ -292,26 +353,51 @@ public class Server implements Runnable {
                         broadcast(writer, messages, false, name);
                     } else if (message.contains("!target:")) {
                         // message structure: <sender>: <body>!target:<receiver>
-                        String[] msgTokens = message.split(":");
+                        String[] msgTokens = message.split("!");
+                        String sender = msgTokens[0].split(":")[0];
+                        String msgBody = msgTokens[0].split(":")[1];
+                        String target = msgTokens[1].split(":")[1];
 
-                        // write the message to the chat history file
-                        writeChatHistory(msgTokens[0], msgTokens[2], message.trim());
+                        if (!target.contains(";")) {
+                            // private chat
+                            // send the message to the target client
+                            broadcast(writer, msgTokens[0], false, target);
+
+                            // write the message to the chat history file
+                            writeChatHistory(sender, target, msgBody);
+                        } else {
+                            // group chat
+                            groupBroadcast(writer, msgTokens[0], target);
+
+                            // write the message to the chat history file
+                            writeGroupChatHistory(sender, target, msgBody);
+                        }
                     } else if (message.contains("!deletechat:")) {
                         // extract target name
                         String target = message.split(":")[1];
 
                         clearChatHistory(name, target);
-                    } else {
-                        // split the messages and targets
-                        String[] msgTokens = message.split("!");
-                        String target = msgTokens[1].split(":")[1];
+                    } else if (message.contains("!newgroup")) {
+                        String groupName = message.split("!")[0];
 
-                        broadcast(writer, msgTokens[0], false, target);
+                        clients.put(groupName, "");
+
+                        String[] credentials = { groupName, "" };
+                        writeToUserDatabase(credentials);
+
+                        // update the client list on all clients
+                        broadcastClients(writer, clients, "all");
+                        broadcastClients(writer, onlineClientWriters, "online");
+                    } else {
                     }
                 }
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }
+    }
+
+    public static void main(String[] args) {
+        new Thread(new Server()).start();
     }
 }
