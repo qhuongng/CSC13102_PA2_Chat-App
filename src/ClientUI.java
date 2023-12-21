@@ -45,12 +45,8 @@ public class ClientUI extends JFrame {
 
         if (!login.isCanceled()) {
             this.username = login.getUsername();
-            setTitle(username);
 
-            // create a chat history folder for the user
-            // will not do anything if the folder already exists
-            new File("data/chats/" + username).mkdirs();
-
+            setTitle("Chat Application Client - " + username);
             initUI();
 
             new Thread(new Client()).start();
@@ -68,10 +64,12 @@ public class ClientUI extends JFrame {
         textInput.addKeyListener(new KeyListener() {
             @Override
             public void keyTyped(KeyEvent e) {
+                // not needed
             }
 
             @Override
             public void keyReleased(KeyEvent e) {
+                // not needed
             }
 
             @Override
@@ -162,7 +160,8 @@ public class ClientUI extends JFrame {
                 if (input == 0) {
                     // OK
                     messages.clear();
-                    clearChatHistory(username, target);
+
+                    writer.println(username + "!deletechat:" + target);
 
                     // show complete dialog
                     JOptionPane.showConfirmDialog(ClientUI.this,
@@ -193,13 +192,22 @@ public class ClientUI extends JFrame {
                     chatName.setText(clientListPane.getSelectedValue());
                     deleteChatButton.setEnabled(true);
 
-                    // import chat history
-                    importChatHistory(username, target);
+                    // clear the messages screen
+                    messages.clear();
+
+                    writer.println(target + "!chatselect");
                 }
             }
         });
 
         JScrollPane clientListScrollPane = new JScrollPane(clientListPane);
+
+        JButton newGroupChatButton = new JButton("New group chat");
+        newGroupChatButton.setFocusable(false);
+
+        JPanel clientsPane = new JPanel(new BorderLayout(10, 10));
+        clientsPane.add(clientListScrollPane, BorderLayout.CENTER);
+        clientsPane.add(newGroupChatButton, BorderLayout.SOUTH);
 
         JPanel chatPane = new JPanel(new BorderLayout(10, 10));
         chatPane.setBorder(new EmptyBorder(0, 10, 0, 10));
@@ -210,7 +218,7 @@ public class ClientUI extends JFrame {
 
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 0));
-        panel.add(clientListScrollPane, BorderLayout.WEST);
+        panel.add(clientsPane, BorderLayout.WEST);
         panel.add(chatPane, BorderLayout.CENTER);
 
         add(panel);
@@ -224,80 +232,6 @@ public class ClientUI extends JFrame {
         setSize(1200, 800);
         setLocationRelativeTo(null);
         setVisible(true);
-    }
-
-    public boolean writeChatHistory(String sender, String receiver, String message) {
-        try {
-            File chatHistoryFile = new File("data/chats/" + sender + "/" + receiver + ".txt");
-
-            if (!chatHistoryFile.exists()) {
-                chatHistoryFile.createNewFile();
-            }
-
-            else if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
-                BufferedWriter buffer = new BufferedWriter(new FileWriter(chatHistoryFile, true));
-
-                buffer.write(message);
-                buffer.newLine();
-
-                buffer.close();
-
-                return true;
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        return false;
-    }
-
-    public boolean clearChatHistory(String sender, String receiver) {
-        try {
-            File chatHistoryFile = new File("data/chats/" + sender + "/" + receiver + ".txt");
-
-            if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
-                BufferedWriter buffer = new BufferedWriter(new FileWriter(chatHistoryFile));
-
-                buffer.write("");
-                buffer.close();
-
-                return true;
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        return false;
-    }
-
-    public boolean importChatHistory(String sender, String receiver) {
-        // clear the messages screen
-        messages.clear();
-
-        try {
-            File chatHistoryFile = new File("data/chats/" + sender + "/" + receiver + ".txt");
-
-            if (!chatHistoryFile.exists()) {
-                chatHistoryFile.createNewFile();
-            }
-
-            else if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
-                BufferedReader buffer = new BufferedReader(new FileReader(chatHistoryFile));
-                String line = "";
-
-                while ((line = buffer.readLine()) != null) {
-                    messages.addElement(line);
-                }
-
-                buffer.close();
-
-                return true;
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        return false;
     }
 
     private String openFileChooser(boolean isDirOnly) {
@@ -336,9 +270,6 @@ public class ClientUI extends JFrame {
         // send the message to the server
         writer.println(username + ": " + messageBody + "!target:" + target);
 
-        // write the message to the chat history file
-        writeChatHistory(username, target, ownMessage);
-
         textInput.setText("");
     }
 
@@ -358,6 +289,8 @@ public class ClientUI extends JFrame {
                 String message;
 
                 while ((message = reader.readLine()) != null) {
+                    System.out.println(username + " received: " + message + "\n");
+
                     if (message.contains("!all")) {
                         String[] receivedClientString = message.split("\\,");
                         String ownUsername = "";
@@ -391,16 +324,16 @@ public class ClientUI extends JFrame {
                         }
 
                         clientListPane.revalidate();
+                    } else if (message.contains("!history")) {
+                        String[] chatLines = message.split(";;");
+
+                        for (int i = 0; i < chatLines.length - 1; i++) {
+                            messages.addElement(chatLines[i]);
+                        }
                     } else if (!message.contains("!login") && !message.contains("!signup")) {
                         if (target != "") {
                             messages.addElement(message);
                         }
-
-                        // retrieve the sender's name to write to corresponding history file
-                        String[] msgTokens = message.split(":");
-
-                        // write the message to the chat history file
-                        writeChatHistory(username, msgTokens[0], message);
                     }
                 }
             } catch (IOException e) {

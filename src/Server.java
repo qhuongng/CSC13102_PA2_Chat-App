@@ -135,6 +135,80 @@ public class Server implements Runnable {
         return false;
     }
 
+    public boolean writeChatHistory(String sender, String receiver, String message) {
+        try {
+            File chatHistoryFile = new File("data/chats/" + sender + "/" + receiver + ".txt");
+
+            if (!chatHistoryFile.exists()) {
+                chatHistoryFile.createNewFile();
+            }
+
+            else if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
+                BufferedWriter buffer = new BufferedWriter(new FileWriter(chatHistoryFile, true));
+
+                buffer.write(message);
+                buffer.newLine();
+
+                buffer.close();
+
+                return true;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    public boolean clearChatHistory(String sender, String receiver) {
+        try {
+            File chatHistoryFile = new File("data/chats/" + sender + "/" + receiver + ".txt");
+
+            if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
+                BufferedWriter buffer = new BufferedWriter(new FileWriter(chatHistoryFile));
+
+                buffer.write("");
+                buffer.close();
+
+                return true;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    public String getChatHistory(String sender, String receiver) {
+        try {
+            String messages = "";
+            File chatHistoryFile = new File("data/chats/" + sender + "/" + receiver + ".txt");
+
+            if (!chatHistoryFile.exists()) {
+                chatHistoryFile.createNewFile();
+            }
+
+            else if (chatHistoryFile.exists() && !chatHistoryFile.isDirectory()) {
+                BufferedReader buffer = new BufferedReader(new FileReader(chatHistoryFile));
+                String line = "";
+
+                while ((line = buffer.readLine()) != null) {
+                    messages += line + ";;";
+                }
+
+                messages += "!history";
+
+                buffer.close();
+
+                return messages;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return "Cannot retrieve chat history";
+    }
+
     private class SocketHandler implements Runnable {
         private BufferedReader reader;
         private PrintWriter writer;
@@ -191,6 +265,9 @@ public class Server implements Runnable {
                         } else {
                             clients.put(credentials[0], credentials[1]);
                             writeToUserDatabase(credentials);
+                            // create a chat history folder for the user
+                            new File("data/chats/" + credentials[0]).mkdirs();
+
                             authRespond(writer, credentials[0] + "!signupsuccess", name);
                         }
                     } else if (message.contains("!login")) {
@@ -206,6 +283,24 @@ public class Server implements Runnable {
                         }
                     } else if (message.equals(name + "!donelogin")) {
                         logins.remove(name);
+                    } else if (message.contains("!chatselect")) {
+                        // extract target name
+                        String target = message.split("!")[0];
+
+                        // import chat history
+                        String messages = getChatHistory(name, target);
+                        broadcast(writer, messages, false, name);
+                    } else if (message.contains("!target:")) {
+                        // message structure: <sender>: <body>!target:<receiver>
+                        String[] msgTokens = message.split(":");
+
+                        // write the message to the chat history file
+                        writeChatHistory(msgTokens[0], msgTokens[2], message.trim());
+                    } else if (message.contains("!deletechat:")) {
+                        // extract target name
+                        String target = message.split(":")[1];
+
+                        clearChatHistory(name, target);
                     } else {
                         // split the messages and targets
                         String[] msgTokens = message.split("!");
