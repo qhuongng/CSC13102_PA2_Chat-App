@@ -11,6 +11,8 @@ import java.awt.*;
 import java.awt.event.*;
 
 public class ClientUI extends JFrame {
+    private Socket socket;
+
     private JFileChooser chooser;
     private ClientLoginUI login;
 
@@ -20,6 +22,7 @@ public class ClientUI extends JFrame {
     // false: offline, true: online
     private Map<String, Boolean> clients;
     private DefaultListModel<String> messages;
+    private DefaultListModel<String> clientList;
 
     // when clicked into a chat, load targets with the users in that chat
     // server will only broadcast the message to users in targets
@@ -56,6 +59,7 @@ public class ClientUI extends JFrame {
 
     private void initUI() {
         messages = new DefaultListModel<>();
+        clientList = new DefaultListModel<>();
 
         JList<String> messagePane = new JList<>(messages);
         messagePane.setCellRenderer(new MessageListCellRenderer());
@@ -82,7 +86,7 @@ public class ClientUI extends JFrame {
                     e.consume();
 
                     if (target != "") {
-                        sendMessage();
+                        sendMessage("text");
                     }
                 }
             }
@@ -97,16 +101,18 @@ public class ClientUI extends JFrame {
         sendButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                sendMessage();
+                sendMessage("text");
             }
         });
 
         JButton sendFileButton = new JButton("Send file");
         sendFileButton.setFocusable(false);
+        sendFileButton.setEnabled(false);
+
         sendFileButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                openFileChooser(false);
+                sendMessage("file");
             }
         });
 
@@ -193,10 +199,13 @@ public class ClientUI extends JFrame {
             public void valueChanged(ListSelectionEvent e) {
                 if (!e.getValueIsAdjusting()) {
                     target = clientListPane.getSelectedValue();
-                    if (clientListPane.getSelectedValue().contains(";")) {
-                        String selected = clientListPane.getSelectedValue();
+
+                    sendFileButton.setEnabled(true);
+
+                    if (target.contains(";")) {
                         // group chat
-                        String[] members = selected.split(";");
+                        // format group chat name
+                        String[] members = target.split(";");
 
                         String labelText = "";
 
@@ -208,7 +217,7 @@ public class ClientUI extends JFrame {
 
                         chatName.setText(labelText);
                     } else {
-                        chatName.setText(clientListPane.getSelectedValue());
+                        chatName.setText(target);
                     }
 
                     deleteChatButton.setEnabled(true);
@@ -366,20 +375,44 @@ public class ClientUI extends JFrame {
         writer.println(groupMembers);
     }
 
-    private void sendMessage() {
-        String message = username + ": " + textInput.getText();
+    private void sendMessage(String messageType) {
+        if (messageType.equals("text")) {
+            String message = username + ": " + textInput.getText();
+            messages.addElement(message);
 
-        messages.addElement(message);
+            // Send the text message to the server
+            writer.println(message + "!target:" + target);
 
-        // send the message to the server
-        writer.println(message + "!target:" + target);
+            textInput.setText("");
+        } else if (messageType.equals("file")) {
+            // File sharing logic
+            String filePath = openFileChooser(false);
 
-        textInput.setText("");
+            if (!filePath.isEmpty()) {
+                String fileName = new File(filePath).getName();
+                try {
+                    // Notify the server about the upcoming file transfer
+                    writer.println(target + "!file:" + fileName);
+
+                    // Send the file to the server
+                    FileInputStream fileStream = new FileInputStream(filePath);
+                    byte[] buffer = new byte[1024];
+                    int bytesRead;
+
+                    while ((bytesRead = fileStream.read(buffer)) != -1) {
+                        socket.getOutputStream().write(buffer, 0, bytesRead);
+                    }
+
+                    fileStream.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
     }
 
     private class Client implements Runnable {
         private BufferedReader reader;
-        private Socket socket;
 
         @Override
         public void run() {
@@ -400,7 +433,6 @@ public class ClientUI extends JFrame {
                         String ownUsername = "";
 
                         clients.clear();
-                        DefaultListModel<String> clientList = new DefaultListModel<>();
 
                         for (int i = 0; i < receivedClientString.length - 1; i++) {
                             if (receivedClientString[i].equals(username)) {
@@ -416,35 +448,48 @@ public class ClientUI extends JFrame {
                         clientList.add(0, ownUsername);
 
                         clientListPane.setModel(clientList);
+
                         clientListPane.revalidate();
+                        clientListPane.repaint();
                     } else if (message.contains("!online")) {
-                        // update online status client list
-                        String[] receivedOnlineClientString = message.split("\\,");
-
-                        // clear the old online status of all clients
-                        Set<String> allClients = clients.keySet();
-
-                        for (String client : allClients) {
-                            if (!client.equals(username)) {
-                                clients.put(client, false);
-                            }
-                        }
-
-                        clientListPane.revalidate();
+                        Set<String> allClientNames = clients.keySet();
 
                         // refresh the online status
-                        for (int i = 0; i < receivedOnlineClientString.length - 1; i++) {
-                            if (!receivedOnlineClientString[i].equals(username)) {
-                                clients.put(receivedOnlineClientString[i], true);
+                        for (String clientName : allClientNames) {
+                            if (message.contains(clientName)) {
+                                clients.put(clientName, true);
+                            } else {
+                                clients.put(clientName, false);
                             }
                         }
 
                         clientListPane.revalidate();
+                        clientListPane.repaint();
                     } else if (message.contains("!history")) {
                         String[] chatLines = message.split(";;");
 
                         for (int i = 0; i < chatLines.length - 1; i++) {
                             messages.addElement(chatLines[i]);
+                        }
+                    } else if (message.contains("!newgroup")) {
+                        String groupName = message.split("!")[0];
+
+                        if (groupName.contains(username)) {
+                            clients.put(groupName, false);
+                            clientList.addElement(groupName);
+
+                            clientListPane.revalidate();
+                            clientListPane.repaint();
+                        }
+                    } else if (message.contains("!newclient")) {
+                        String clientName = message.split("!")[0];
+
+                        if (!clientName.equals(username) && !clients.containsKey(clientName)) {
+                            clients.put(clientName, false);
+                            clientList.addElement(clientName);
+
+                            clientListPane.revalidate();
+                            clientListPane.repaint();
                         }
                     } else if (message.contains("!group:")) {
                         // message structure: <sender>: <body>!group:<target>
@@ -455,13 +500,17 @@ public class ClientUI extends JFrame {
                         if (target.equals(targetGroup)) {
                             messages.addElement(msgBody);
                         }
-
                     } else if (!message.contains("!login") && !message.contains("!signup")) {
-                        if (target != "") {
+                        String senderName = message.split(":")[0];
+
+                        if (target.equals(senderName)) {
+                            // private chat
                             messages.addElement(message);
                         }
                     }
                 }
+
+                socket.close();
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -493,11 +542,9 @@ public class ClientUI extends JFrame {
                 labelText += " (You)";
             }
 
-            if (clientName.contains("(You)") || (clients.get(clientName) != null && clients.get(clientName) == true)) {
+            if (clientName.equals(username)
+                    || (clients.get(clientName) != null && clients.get(clientName) == true)) {
                 labelText += "</b></p><p><font color='green'>• <em>active</em></font><p></html>";
-            } else if (!clientName.contains(";") && clients.get(clientName) != null
-                    && clients.get(clientName) == false) {
-                labelText += "<b></p><p><font color='gray'>• <em>offline</em></font><p></html>";
             } else if (clientName.contains(";")) {
                 // group chat
                 String[] members = clientName.split(";");
@@ -510,6 +557,8 @@ public class ClientUI extends JFrame {
 
                 labelText += members[members.length - 1]
                         + "</b></p><p><font color='gray'><em>Group chat</em></font><p></html>";
+            } else if (clients.get(clientName) != null && clients.get(clientName) == false) {
+                labelText += "<b></p><p><font color='gray'>• <em>offline</em></font><p></html>";
             }
 
             setText(labelText);

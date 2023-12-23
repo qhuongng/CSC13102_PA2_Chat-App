@@ -86,7 +86,7 @@ public class Server implements Runnable {
         }
     }
 
-    public void broadcastClients(PrintWriter writer, Map<String, ?> map, String mode) {
+    public void broadcastClients(PrintWriter writer, Map<String, ?> map, String mode, String target) {
         String broadcastMsg = "";
         Set<String> usernames = map.keySet();
 
@@ -96,11 +96,48 @@ public class Server implements Runnable {
 
         if (mode == "online") {
             broadcastMsg += "!online";
+            broadcast(writer, broadcastMsg, true, "");
         } else if (mode == "all") {
             broadcastMsg += "!all";
+            broadcast(writer, broadcastMsg, false, target);
         }
+    }
 
-        broadcast(writer, broadcastMsg, true, "");
+    private void receiveFile(PrintWriter writer, String sender, String receiver, InputStream fileStream,
+            String fileName) {
+        try {
+            String path = "data/files/" + sender + "/" + receiver + "/";
+            File directory = new File(path);
+            directory.mkdirs();
+
+            OutputStream outputFile = new FileOutputStream(path + fileName);
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+
+            while ((bytesRead = fileStream.read(buffer)) != -1) {
+                outputFile.write(buffer, 0, bytesRead);
+            }
+
+            outputFile.close();
+            fileStream.close();
+
+            // notify the sender that the file transfer was successful
+            PrintWriter senderWriter = onlineClientWriters.get(sender);
+            PrintWriter receiverWriter = onlineClientWriters.get(receiver);
+
+            if (senderWriter != null) {
+                // sender: <file sent>
+                senderWriter.println(sender + ": <file sent>");
+
+                if (receiverWriter != null) {
+                    senderWriter.println(sender + ": <file sent>");
+                }
+
+                writeChatHistory(sender, receiver, "<file sent>");
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     public String convertToCsv(String[] credentials) {
@@ -131,13 +168,17 @@ public class Server implements Runnable {
             while ((line = buffer.readLine()) != null) {
                 String[] data = line.split("\\,");
 
-                if (data.length != 2)
-                    continue;
+                if (data.length == 1) {
+                    // group chat
+                    String username = data[0];
+                    clients.put(username, "");
+                } else if (data.length == 2) {
+                    String username = data[0];
+                    String password = data[1];
 
-                String username = data[0];
-                String password = data[1];
+                    clients.put(username, password);
+                }
 
-                clients.put(username, password);
             }
 
             buffer.close();
@@ -272,12 +313,14 @@ public class Server implements Runnable {
     }
 
     private class SocketHandler implements Runnable {
+        private Socket socket;
         private BufferedReader reader;
         private PrintWriter writer;
         private String name;
 
         public SocketHandler(Socket socket) {
             try {
+                this.socket = socket;
                 this.reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 this.writer = new PrintWriter(socket.getOutputStream(), true);
 
@@ -291,11 +334,10 @@ public class Server implements Runnable {
 
                     onlineClientWriters.put(name, writer);
 
-                    // broadcast list of all registered clients to all clients
-                    broadcastClients(writer, clients, "all");
+                    broadcastClients(writer, clients, "all", name);
 
                     // broadcast list of online clients to all clients
-                    broadcastClients(writer, onlineClientWriters, "online");
+                    broadcastClients(writer, onlineClientWriters, "online", "");
                 } else {
                     this.name = firstTouch.split("!")[0];
                     logins.put(name, writer);
@@ -316,7 +358,8 @@ public class Server implements Runnable {
                     // remove the client from the online list if they send the disconnect message
                     if (message.equals(name + "!disconnect")) {
                         onlineClientWriters.remove(name);
-                        broadcastClients(writer, onlineClientWriters, "online");
+                        broadcastClients(writer, onlineClientWriters, "online", "");
+                        break;
                     } else if (message.contains("!signup")) {
                         String[] msgTokens = message.split("!");
                         String[] credentials = msgTokens[0].split(",");
@@ -330,6 +373,7 @@ public class Server implements Runnable {
                             new File("data/chats/" + credentials[0]).mkdirs();
 
                             authRespond(writer, credentials[0] + "!signupsuccess", name);
+                            broadcast(writer, credentials[0] + "!newclient", true, "");
                         }
                     } else if (message.contains("!login")) {
                         String[] msgTokens = message.split("!");
@@ -377,6 +421,17 @@ public class Server implements Runnable {
                         String target = message.split(":")[1];
 
                         clearChatHistory(name, target);
+                    }
+                    if (message.contains("!file:")) {
+                        // Format: <receiver>!file:<filename>
+                        String receiver = message.split("!")[0];
+                        String fileName = message.split(":")[1];
+
+                        // Read file content from the client
+                        InputStream fileStream = socket.getInputStream();
+
+                        // Handle the file transfer
+                        receiveFile(writer, name, receiver, fileStream, fileName);
                     } else if (message.contains("!newgroup")) {
                         String groupName = message.split("!")[0];
 
@@ -386,8 +441,8 @@ public class Server implements Runnable {
                         writeToUserDatabase(credentials);
 
                         // update the client list on all clients
-                        broadcastClients(writer, clients, "all");
-                        broadcastClients(writer, onlineClientWriters, "online");
+                        broadcast(writer, groupName + "!newgroup", true, "");
+                        broadcastClients(writer, onlineClientWriters, "online", "");
                     } else {
                     }
                 }
