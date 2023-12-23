@@ -103,43 +103,6 @@ public class Server implements Runnable {
         }
     }
 
-    private void receiveFile(PrintWriter writer, String sender, String receiver, InputStream fileStream,
-            String fileName) {
-        try {
-            String path = "data/files/" + sender + "/" + receiver + "/";
-            File directory = new File(path);
-            directory.mkdirs();
-
-            OutputStream outputFile = new FileOutputStream(path + fileName);
-            byte[] buffer = new byte[1024];
-            int bytesRead;
-
-            while ((bytesRead = fileStream.read(buffer)) != -1) {
-                outputFile.write(buffer, 0, bytesRead);
-            }
-
-            outputFile.close();
-            fileStream.close();
-
-            // notify the sender that the file transfer was successful
-            PrintWriter senderWriter = onlineClientWriters.get(sender);
-            PrintWriter receiverWriter = onlineClientWriters.get(receiver);
-
-            if (senderWriter != null) {
-                // sender: <file sent>
-                senderWriter.println(sender + ": <file sent>");
-
-                if (receiverWriter != null) {
-                    senderWriter.println(sender + ": <file sent>");
-                }
-
-                writeChatHistory(sender, receiver, "<file sent>");
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
     public String convertToCsv(String[] credentials) {
         return String.join(",", credentials);
     }
@@ -178,7 +141,6 @@ public class Server implements Runnable {
 
                     clients.put(username, password);
                 }
-
             }
 
             buffer.close();
@@ -312,6 +274,57 @@ public class Server implements Runnable {
         return "Cannot retrieve chat history";
     }
 
+    private boolean receiveFileFromClient(String sender, String receiver, InputStream istream, String fname) {
+        try {
+            String path = "data/files/" + sender + "/" + receiver + "/";
+            File directory = new File(path);
+            directory.mkdirs();
+
+            try (OutputStream ostream = new FileOutputStream(path + fname)) {
+                byte[] buffer = new byte[1024];
+                int bytesRead;
+
+                while (istream.available() > 0 && (bytesRead = istream.read(buffer)) != -1) {
+                    ostream.write(buffer, 0, bytesRead);
+                }
+
+                return true;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    // private void sendFileToClient(Socket socket, String sender, String receiver,
+    // String fname) {
+    // try {
+    // // construct the file path on the server
+    // String fpath = "data/files/" + sender + "/" + receiver + "/" + fname;
+
+    // // check if the file exists
+    // File file = new File(fpath);
+
+    // if (!file.exists()) {
+    // System.out.println("File not found: " + fpath);
+    // return;
+    // }
+
+    // FileInputStream fistream = new FileInputStream(fpath);
+    // byte[] buffer = new byte[1024];
+    // int bytesRead;
+
+    // while ((bytesRead = fistream.read(buffer)) != -1) {
+    // socket.getOutputStream().write(buffer, 0, bytesRead);
+    // }
+
+    // fistream.close();
+    // } catch (IOException e) {
+    // e.printStackTrace();
+    // }
+    // }
+
     private class SocketHandler implements Runnable {
         private Socket socket;
         private BufferedReader reader;
@@ -421,17 +434,29 @@ public class Server implements Runnable {
                         String target = message.split(":")[1];
 
                         clearChatHistory(name, target);
-                    }
-                    if (message.contains("!file:")) {
-                        // Format: <receiver>!file:<filename>
+                    } else if (message.contains("!file:")) {
+                        // message structure: <receiver>!file:<filename>
                         String receiver = message.split("!")[0];
-                        String fileName = message.split(":")[1];
+                        String fname = message.split(":")[1];
 
-                        // Read file content from the client
-                        InputStream fileStream = socket.getInputStream();
+                        // read file content from the client
+                        InputStream fstream = socket.getInputStream();
 
-                        // Handle the file transfer
-                        receiveFile(writer, name, receiver, fileStream, fileName);
+                        // handle the file transfer
+                        if (receiveFileFromClient(name, receiver, fstream, fname)) {
+                            String recvMsg = " sent file [" + fname + "]";
+
+                            broadcast(writer, name + ":" + recvMsg, false, receiver);
+                            writeChatHistory(name, receiver, recvMsg);
+                        }
+                    } else if (message.contains("!download:")) {
+                        // message structure: <sender>: sent file [file name]!download:<receiver>
+                        String sender = message.split(":")[0];
+                        String receiver = message.split(":")[2];
+                        String fname = message.split("\\[|\\]")[1];
+
+                        // TODO: handle sending file to client
+                        // sendFileToClient(socket, sender, receiver, fname);
                     } else if (message.contains("!newgroup")) {
                         String groupName = message.split("!")[0];
 

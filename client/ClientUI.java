@@ -1,3 +1,5 @@
+package client;
+
 import java.util.*;
 import java.io.*;
 import java.net.*;
@@ -63,6 +65,21 @@ public class ClientUI extends JFrame {
 
         JList<String> messagePane = new JList<>(messages);
         messagePane.setCellRenderer(new MessageListCellRenderer());
+        messagePane.addListSelectionListener(new ListSelectionListener() {
+            @Override
+            public void valueChanged(ListSelectionEvent e) {
+                if (!e.getValueIsAdjusting()) {
+                    String selected = messagePane.getSelectedValue();
+
+                    if (selected.contains("sent file [")) {
+                        openFileChooser(true);
+                        // notify the server about the upcoming file transfer
+                        // message structure: <sender>: sent file [file name]!download:<receiver>
+                        writer.println(selected + "!download:" + username);
+                    }
+                }
+            }
+        });
 
         JScrollPane messageScrollPane = new JScrollPane(messagePane);
 
@@ -380,30 +397,32 @@ public class ClientUI extends JFrame {
             String message = username + ": " + textInput.getText();
             messages.addElement(message);
 
-            // Send the text message to the server
+            // send the text message to the server
             writer.println(message + "!target:" + target);
 
             textInput.setText("");
         } else if (messageType.equals("file")) {
-            // File sharing logic
-            String filePath = openFileChooser(false);
+            String fpath = openFileChooser(false);
 
-            if (!filePath.isEmpty()) {
-                String fileName = new File(filePath).getName();
+            if (!fpath.isEmpty()) {
+                String fname = new File(fpath).getName();
+
                 try {
                     // Notify the server about the upcoming file transfer
-                    writer.println(target + "!file:" + fileName);
+                    writer.println(target + "!file:" + fname);
 
                     // Send the file to the server
-                    FileInputStream fileStream = new FileInputStream(filePath);
+                    FileInputStream fistream = new FileInputStream(fpath);
                     byte[] buffer = new byte[1024];
                     int bytesRead;
 
-                    while ((bytesRead = fileStream.read(buffer)) != -1) {
+                    while ((bytesRead = fistream.read(buffer)) != -1) {
                         socket.getOutputStream().write(buffer, 0, bytesRead);
                     }
 
-                    fileStream.close();
+                    fistream.close();
+
+                    messages.addElement(username + ": sent file [" + fname + "]");
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
@@ -439,8 +458,15 @@ public class ClientUI extends JFrame {
                                 ownUsername = receivedClientString[i];
                                 clients.put(receivedClientString[i], true);
                             } else {
-                                clientList.addElement(receivedClientString[i]);
-                                clients.put(receivedClientString[i], false);
+                                if (receivedClientString[i].contains(";")) {
+                                    if (receivedClientString[i].contains(username)) {
+                                        clientList.addElement(receivedClientString[i]);
+                                        clients.put(receivedClientString[i], false);
+                                    }
+                                } else {
+                                    clientList.addElement(receivedClientString[i]);
+                                    clients.put(receivedClientString[i], false);
+                                }
                             }
                         }
 
@@ -500,6 +526,8 @@ public class ClientUI extends JFrame {
                         if (target.equals(targetGroup)) {
                             messages.addElement(msgBody);
                         }
+                    } else if (message.contains("!sendingfile")) {
+                        // TODO: handle file download
                     } else if (!message.contains("!login") && !message.contains("!signup")) {
                         String senderName = message.split(":")[0];
 
@@ -511,7 +539,9 @@ public class ClientUI extends JFrame {
                 }
 
                 socket.close();
-            } catch (IOException e) {
+            } catch (
+
+            IOException e) {
                 e.printStackTrace();
             }
         }
@@ -573,6 +603,13 @@ public class ClientUI extends JFrame {
                 boolean isSelected, boolean cellHasFocus) {
 
             setBorder(BorderFactory.createEmptyBorder(10, 5, 10, 5));
+            setOpaque(true);
+
+            if (isSelected) {
+                setBackground(new Color(235, 235, 235));
+            } else {
+                setBackground(Color.WHITE);
+            }
 
             if (message.contains(username)) {
                 setForeground(Color.BLUE);
@@ -586,6 +623,7 @@ public class ClientUI extends JFrame {
 
             return this;
         }
+
     }
 
     public static void setUIFont(FontUIResource f) {
